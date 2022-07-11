@@ -1,0 +1,68 @@
+CREATE QUERY ContactWhen(vertex<Contact> contact, datetime time) FOR GRAPH MyGraph { 
+	/*
+  Sample input:
+	  customer: Chris-Xi
+	  opportunity: 2019-06-05
+
+*/
+	typedef tuple <dtime datetime, attribute string, source string> updates;
+	ListAccum<vertex> @@earliestFirst;
+	HeapAccum<updates>(1,dtime desc) @emailUpdate;
+	HeapAccum<updates>(1,dtime desc) @phoneUpdate;
+	HeapAccum<updates>(1,dtime desc) @titleUpdate;
+
+	Start = {contact};
+	
+  GetUpdates = SELECT t FROM Start:s-(wasUpdated:e)-ContactOnDate:t
+	             where t.modifiedDate <= time and s.outdegree("wasUpdated") > 1
+	             order by t.modifiedDate asc;
+	
+	print GetUpdates;
+	
+	UpdatedContacts = SELECT t FROM GetUpdates:s-(wasUpdated:e)-Contact:t
+	                  accum 
+	                    @@earliestFirst += GetUpdates,
+	                    if s.email != "" then
+	                      t.@emailUpdate += updates(s.modifiedDate,s.email,s.source)
+	                    end,
+	                    if s.phone != "" then
+	                      t.@phoneUpdate += updates(s.modifiedDate,s.phone,s.source)
+	                    end,
+	                    if s.title != "" then
+	                      t.@titleUpdate += updates(s.modifiedDate,s.title,s.source)
+	                    end;
+	
+	UpdatedContacts2 = SELECT t from GetUpdates:s-(wasUpdated:e)-Contact:t
+	                    post-accum
+	                    if GetUpdates.size() > 0 then
+	                    if t.@emailUpdate.size() > 0 then
+	                        t.LastModifiedDate = t.@emailUpdate.top().dtime,
+	                        t.LastModifiedByid = t.@emailUpdate.top().source,
+	                        t.Email = t.@emailUpdate.top().attribute,
+	                        t.Updated = true
+	                    end,
+	                    if t.@phoneUpdate.size() > 0 then
+	                      if t.@phoneUpdate.top().dtime > t.@emailUpdate.top().dtime then
+	                        t.LastModifiedDate = t.@phoneUpdate.top().dtime,
+	                        t.LastModifiedByid = t.@phoneUpdate.top().source,
+	                        t.Phone = t.@phoneUpdate.top().attribute,
+	                        t.Updated = true
+	                      else
+	                        t.Phone = t.@phoneUpdate.top().attribute,
+	                        t.Updated = true 
+	                      end
+	                    end,
+	                    if t.@titleUpdate.size() > 0 then
+	                      if t.@titleUpdate.top().dtime > t.@emailUpdate.top().dtime and t.@titleUpdate.top().dtime > t.@phoneUpdate.top().dtime then
+	                        t.LastModifiedDate = t.@titleUpdate.top().dtime,
+	                        t.LastModifiedByid = t.@titleUpdate.top().source,
+	                        t.Title = t.@titleUpdate.top().attribute,
+	                        t.Updated = true
+	                      else
+	                        t.Title = t.@titleUpdate.top().attribute,
+	                        t.Updated = true 
+	                      end 
+	                    end
+	                  end;
+	
+}
