@@ -1,0 +1,33 @@
+CREATE QUERY FirewallBypassDetection(/* Parameters here */) FOR GRAPH MyGraph SYNTAX V2 { 
+  
+	// start from all resources that requires firewall check, 
+	// detect if any read events that are done without any firewall event prior to it.
+	// [resouce] -> [read event] -> [user id] -> [firewall event]
+	
+	ListAccum<datetime> @read_time, @firewall_time;
+	OrAccum @by_pass;
+	
+  resources = {Resource.*};
+	
+	resources = select res from resources:res 
+	            where res.Firewall_Required == true;
+	
+	events = select event from resources-(Read_From_Resource)-:event
+	         where event.Event_Type == "read";
+	
+  IP_userID = select t from events:s-((Has_IP|User_Event):e)-:t
+	            accum t.@read_time += s.Start_Date;
+	
+	IP_userID_firewall = select s from IP_userID:s-((Has_IP|User_Event):e)-:event
+	                     where event.Event_Type == "firewall"
+	                     accum s.@firewall_time += event.Start_Date;
+	
+	IP_userID_no_firewall = IP_userID minus IP_userID_firewall;
+	
+	print IP_userID_no_firewall;
+	
+	IP_userID_bypass_firewall = select s from IP_userID_firewall:s
+	                            where s.@read_time.size() > s.@firewall_time.size();
+	
+	print IP_userID_bypass_firewall;
+}

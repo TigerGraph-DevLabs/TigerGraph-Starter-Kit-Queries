@@ -1,0 +1,46 @@
+CREATE QUERY FootprintingDetection(datetime start_date = to_datetime("2019-05-01 11:10:00"), datetime end_date = to_datetime("2019-05-01 11:15:00")) FOR GRAPH MyGraph SYNTAX V2 { 
+	
+	// this query detects user id that calls many endpoints of a service in short period of time in order to find its vulnerability
+	// [user id] -> [request events] -> [service]
+	
+	TypeDef tuple<vertex user, vertex service, int cnt, float mean, float std> result_tuple;
+	AvgAccum @mean;
+	SumAccum<float> @std;
+	MapAccum<vertex,SetAccum<string>> @apiMap;
+	ListAccum<result_tuple> @@result_list;
+  
+  events = {Event.*};
+	
+	events = select s from events:s 
+           where s.Start_Date > start_date and s.Start_Date < end_date
+	           and s.Event_Type == "request";
+	
+	events = select event from events:event-(User_Event)-:user
+	         accum event.@apiMap += (user -> event.Endpoint);
+	
+	services = select s from events:event-(To_Service)-:s
+	           accum s.@apiMap += event.@apiMap
+	           post-accum
+	              case when s.@apiMap.size() > 1 then
+	               // calculate the mean
+	               foreach (user,cnt) in s.@apiMap do
+	                 s.@mean += cnt.size()
+	               end,
+	               // calculate the standard deviation
+	               foreach (user,cnt) in s.@apiMap do
+	                 s.@std += pow(cnt.size() - s.@mean, 2)
+	               end,
+	               s.@std = sqrt(s.@std/(s.@apiMap.size()-1)),
+	               case when s.@std != 0 then
+	                 // calculate the out lier
+	                 foreach (user,cnt) in s.@apiMap do
+	                   case when cnt.size()-s.@mean > 3*s.@std then
+	                     @@result_list += result_tuple(user,s,cnt.size(),s.@mean,s.@std)
+	                   end
+	                 end
+	               end
+	             end;
+	
+	print @@result_list;
+	print services;
+}

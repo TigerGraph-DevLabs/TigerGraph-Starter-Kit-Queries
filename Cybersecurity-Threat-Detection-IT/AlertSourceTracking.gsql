@@ -1,0 +1,53 @@
+CREATE QUERY AlertSourceTracking(int days=7, int k=3) FOR GRAPH MyGraph SYNTAX V2 { 
+  
+	// start from the corrputed file alert, find all the user names that output to the 
+	// corresponding resource within input period of time before the reading action.
+	// Then start from the user names search for the login IP addresses
+	// [alert] -> [resource] -> [write event] -> [user name] -> [login event] -> [IP]
+	
+	MaxAccum<datetime> @alert_date, @read_date; // the most recent dates
+	SumAccum<int> @count;
+	SetAccum<vertex> @@alert_type;
+	ListAccum<edge> @path;
+	
+	@@alert_type += to_vertex("Data Corrupted", "Alert_Type");
+	
+	start = {@@alert_type};
+	
+	file_corrupted_alerts = select alert from start-(Alert_Has_Type:e)-:alert
+	                        accum alert.@path += e;
+	
+	service = select serv from file_corrupted_alerts:alert-(Service_Alert:e)-:serv
+	          accum serv.@alert_date += alert.Alert_Date, serv.@path += alert.@path, serv.@path += e;
+	
+	read_events = select event from service:s-(From_Service:e)-:event
+	              // the read date is within one day before the alert
+	              where datetime_diff(s.@alert_date,event.Start_Date) between 0 and 3600*24*days
+	              and event.Event_Type == "read"
+	              accum event.@path += s.@path, event.@path += e;
+	
+	resource = select res from read_events:s-(Read_From_Resource:e)-:res
+	            // keep the most recent read date of the resource
+	            accum res.@read_date += s.Start_Date, res.@path += s.@path, res.@path += e; 
+	
+	write_events = select event from resource:s-(Output_To_Resource:e)-:event
+	               // the write date is within one day before the read
+	               where datetime_diff(s.@read_date,event.Start_Date) between 0 and 3600*24*days
+	                 and event.Event_Type == "write"
+	               accum event.@path += s.@path, event.@path += e;
+	
+	// get the users who behaved the file writing operation
+	users = select user from write_events:s-(User_Event:e)-:user
+	          accum user.@count += 1, user.@path += s.@path, user.@path += e;
+	
+	login_events = select event from users:s-(User_Event:e)-:event
+	               where event.Event_Type == "login"
+	               accum event.@count += s.@count, event.@path += s.@path, event.@path += e;
+	
+	login_IP = select ip from login_events:s-(Has_IP:e)-:ip
+	           accum ip.@count += s.@count, ip.@path += s.@path, ip.@path += e
+	           order by ip.@count desc
+	           limit k;
+	
+	print login_IP [login_IP.@count, login_IP.@path];
+}

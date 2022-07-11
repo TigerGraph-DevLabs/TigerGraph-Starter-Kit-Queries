@@ -1,0 +1,51 @@
+CREATE QUERY FloodingDetection(/* Parameters here */) FOR GRAPH MyGraph { 
+  
+  // this query detects the addresses that flooded one service with large number of requests.
+  // and possibly the ip addresses have logged in to many accounts 
+  // [IP] -> [login event] -> [user id] -> [request event] -> [service]
+  
+  TypeDef tuple<vertex entity, vertex service, int cnt, float mean, float std> result_tuple;
+  AvgAccum @mean;
+  SumAccum<float> @std;
+  MapAccum<vertex, SumAccum<int>> @countMap;
+  ListAccum<result_tuple> @@result_list;
+  
+  IPs = {IP.*};
+  
+  login_events = select event from IPs-(Has_IP)-:event
+                 where event.Event_Type == "login"
+                 accum event.@countMap += (IPs->1);
+  
+  users = select user from login_events-(User_Event)-:user
+          accum user.@countMap += login_events.@countMap;
+  
+  events = select event from users-(User_Event:e)-:event
+           where event.Event_Type == "request"
+           accum event.@countMap += users.@countMap;
+  
+  services = select s from events-(To_Service)-:s
+             accum s.@countMap += events.@countMap
+             post-accum
+               case when s.@countMap.size() > 1 then
+                 // calculate the mean
+                 foreach (user,cnt) in s.@countMap do
+                   s.@mean += cnt
+                 end,
+                 // calculate the standard deviation
+                 foreach (user,cnt) in s.@countMap do
+                   s.@std += pow(cnt - s.@mean, 2)
+                 end,
+                 s.@std = sqrt(s.@std/(s.@countMap.size()-1)),
+                 case when s.@std != 0 then
+                   // calculate the out lier
+                   foreach (user,cnt) in s.@countMap do
+                     case when cnt-s.@mean > 3*s.@std then
+                       @@result_list += result_tuple(user,s,cnt,s.@mean,s.@std)
+                     end
+                   end
+                 end
+               end;
+  
+  print @@result_list;
+  print services;
+}
