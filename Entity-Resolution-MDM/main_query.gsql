@@ -1,0 +1,12 @@
+CREATE QUERY main_query(float threshold) FOR GRAPH Entity_Resolution { 
+	/*******************************************************
+	 * This query links all potential same-owner accounts
+	 *
+	 * Example parameter:
+	 *   threshold : 0.6
+	 *******************************************************/
+	all_acc = {Account.*};
+	rm = SELECT s FROM all_acc:s-(Same_Owner:e)-:t ACCUM delete(e);
+	all_acc = SELECT s FROM all_acc:s ACCUM account_matching(s,threshold);
+  PRINT all_acc;
+}

@@ -1,0 +1,32 @@
+CREATE QUERY account_matching(vertex<Account> inputAcc, float threshold) FOR GRAPH Entity_Resolution { 
+	/*******************************************************
+	 * This query only detects and links for one account
+	 * To link the entire graph, run main_query instead
+	 * 
+	 * Example parameters: 
+	 *   Account : 407
+	 *   threshold : 0.6
+	 *******************************************************/
+	
+	SumAccum<float> @score;
+	
+	start = {inputAcc};
+	
+	attribtues = SELECT t FROM start-((Has_IP|Has_Email|Has_Last_Name|Has_Phone|Has_Address|Has_Device):e)-:t;
+	
+	related_accs = SELECT t FROM attribtues-((Has_IP|Has_Email|Has_Last_Name|Has_Phone|Has_Address|Has_Device):e)-:t
+	               WHERE t != inputAcc
+	               ACCUM CASE e.type
+	                       WHEN "Has_IP" THEN t.@score += 0.2
+	                       WHEN "Has_Email" THEN t.@score += 0.3
+	                       WHEN "Has_Last_Name" THEN t.@score += 0.3
+	                       WHEN "Has_Phone" THEN t.@score += 0.2
+	                       WHEN "Has_Address" THEN t.@score += 0.1
+	                       WHEN "Has_Device" THEN t.@score += 0.2
+	                     END
+	               POST-ACCUM 
+	                 CASE WHEN t.@score > threshold THEN
+	                   INSERT INTO Same_Owner VALUES (inputAcc, t, t.@score) 
+	                 END;
+  PRINT related_accs;
+}
